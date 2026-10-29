@@ -29,6 +29,8 @@ import (
 
 // Config are the configuration options for the Interpreter
 type Config struct {
+	// ReadOnlyCallMemo may reuse a proven read-only root frame. Nil by default.
+	ReadOnlyCallMemo        RootCallMemo
 	Tracer                  *tracing.Hooks
 	NoBaseFee               bool  // Forces the EIP-1559 baseFee to 0 (needed for 0 price calls)
 	EnablePreimageRecording bool  // Enables recording of SHA3/keccak preimages
@@ -176,6 +178,15 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 	// Reset the previous call's return data. It's unimportant to preserve the old buffer
 	// as every returning call will return new data anyway.
 	in.returnData = nil
+
+	if memo := in.evm.Config.ReadOnlyCallMemo; memo != nil && in.evm.depth == 1 {
+		if output, data, gas, hit := memo.Lookup(in.evm, contract, input, in.readOnly, in.evm.chainRules); hit {
+			contract.Gas = gas
+			in.returnData = data
+			return output, nil
+		}
+		defer func() { memo.Store(ret, in.returnData, contract.Gas, err) }()
+	}
 
 	// Don't bother with the execution if there's no code.
 	if len(contract.Code) == 0 {
