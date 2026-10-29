@@ -222,14 +222,23 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		mem.Free()
 	}()
 	contract.Input = input
+	var scopeOpcode tracing.OpcodeHook
+	useScopeOpcode := debug && in.evm.Config.Tracer.OnOpcodeForScope != nil
+	if useScopeOpcode {
+		scopeOpcode = in.evm.Config.Tracer.OnOpcodeForScope(callContext)
+	}
 
 	if debug {
 		defer func() { // this deferred method handles exit-with-error
 			if err == nil {
 				return
 			}
-			if !logged && in.evm.Config.Tracer.OnOpcode != nil {
-				in.evm.Config.Tracer.OnOpcode(pcCopy, byte(op), gasCopy, cost, callContext, in.returnData, in.evm.depth, VMErrorFromErr(err))
+			onOpcode := in.evm.Config.Tracer.OnOpcode
+			if useScopeOpcode {
+				onOpcode = scopeOpcode
+			}
+			if !logged && onOpcode != nil {
+				onOpcode(pcCopy, byte(op), gasCopy, cost, callContext, in.returnData, in.evm.depth, VMErrorFromErr(err))
 			}
 			if logged && in.evm.Config.Tracer.OnFault != nil {
 				in.evm.Config.Tracer.OnFault(pcCopy, byte(op), gasCopy, cost, callContext, in.evm.depth, VMErrorFromErr(err))
@@ -310,8 +319,16 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 			if in.evm.Config.Tracer.OnGasChange != nil {
 				in.evm.Config.Tracer.OnGasChange(gasCopy, gasCopy-cost, tracing.GasChangeCallOpCode)
 			}
-			if in.evm.Config.Tracer.OnOpcode != nil {
-				in.evm.Config.Tracer.OnOpcode(pc, byte(op), gasCopy, cost, callContext, in.returnData, in.evm.depth, VMErrorFromErr(err))
+			onOpcode := in.evm.Config.Tracer.OnOpcode
+			if useScopeOpcode {
+				onOpcode = scopeOpcode
+			}
+			if onOpcode != nil {
+				onOpcode(pc, byte(op), gasCopy, cost, callContext, in.returnData, in.evm.depth, VMErrorFromErr(err))
+				logged = true
+			}
+			if useScopeOpcode {
+				// A frame may disable opcode callbacks while retaining OnFault.
 				logged = true
 			}
 		}
